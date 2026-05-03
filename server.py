@@ -128,19 +128,36 @@ def run_outlook_command_line(
             mailto_part = (
                 f"{recipient}?subject={quote(subject)}&body={quote(body)}"
             )
-            subprocess.Popen(
+            completed = subprocess.run(
                 [
                     "powershell.exe",
                     "-NoProfile",
                     "-ExecutionPolicy",
                     "Bypass",
-                    "-Command",
-                    "Start-Process -FilePath $args[0] -ArgumentList @('/c','ipm.note','/m',$args[1])",
+                    "-File",
+                    str(BASE_DIR / "open_outlook_mail.ps1"),
+                    "-OutlookPath",
                     outlook_exe,
-                    mailto_part,
+                    "-Recipient",
+                    recipient,
+                    "-Subject",
+                    subject,
+                    "-Body",
+                    body,
+                    "-AttachmentPath",
+                    str(attachment_path) if attachment_path else "",
                 ],
                 cwd=BASE_DIR,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=20,
             )
+
+            if completed.returncode != 0:
+                details = (completed.stderr or completed.stdout or "").strip()
+                raise RuntimeError(details or "Outlook launch command failed.")
+
             created += 1
             log.info("Started Outlook draft command for %s", recipient)
         except Exception as exc:
