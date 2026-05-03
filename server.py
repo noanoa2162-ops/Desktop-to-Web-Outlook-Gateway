@@ -20,14 +20,6 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
-try:
-    import pythoncom  # noqa: F401
-    import win32com.client  # noqa: F401
-except ImportError:
-    pythoncom = None
-    win32com = None
-
-
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = Path(tempfile.mkdtemp(prefix="outlook_drafts_"))
 BRIDGE_TIMEOUT_SECONDS = 45
@@ -97,8 +89,6 @@ def save_attachment() -> tuple[Path | None, str | None]:
 def outlook_unavailable_message() -> str | None:
     if os.name != "nt":
         return "This solution requires Windows because Outlook is controlled through COM Automation."
-    if pythoncom is None:
-        return "The pywin32 package is missing. Run: python -m pip install -r requirements.txt"
     return None
 
 
@@ -119,7 +109,17 @@ def run_outlook_bridge(
 
     try:
         completed = subprocess.run(
-            [sys.executable, str(BASE_DIR / "outlook_bridge.py"), str(payload_path)],
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-STA",
+                "-File",
+                str(BASE_DIR / "outlook_bridge.ps1"),
+                "-PayloadPath",
+                str(payload_path),
+            ],
             cwd=BASE_DIR,
             capture_output=True,
             text=True,

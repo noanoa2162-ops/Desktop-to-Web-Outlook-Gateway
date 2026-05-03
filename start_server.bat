@@ -17,7 +17,7 @@ if errorlevel 1 (
 )
 
 echo Checking Python packages...
-python -c "import flask, flask_cors, win32com.client" >nul 2>nul
+python -c "import flask, flask_cors" >nul 2>nul
 if errorlevel 1 (
     echo Missing packages. Installing requirements...
     python -m pip install -r requirements.txt --quiet
