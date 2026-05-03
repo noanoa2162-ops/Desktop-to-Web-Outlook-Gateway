@@ -34,7 +34,7 @@ Browser UI
 Local Python Bridge
   server.py
   Flask
-  Outlook command-line launch
+  EML draft generation
 
 Desktop Application
   Microsoft Outlook
@@ -42,7 +42,7 @@ Desktop Application
 
 The browser cannot directly control local desktop software such as Outlook. For security reasons, websites are not allowed to freely access local files or launch desktop programs.
 
-To solve that limitation, the project uses a local Flask server as a controlled bridge. The browser sends the form data to `localhost`, and the Python service launches the installed classic Outlook desktop application with command-line arguments that open editable compose windows.
+To solve that limitation, the project uses a local Flask server as a controlled bridge. The browser sends the form data to `localhost`, and the Python service creates local `.eml` draft files with the `X-Unsent` header. Those files include the recipient, subject, body, and optional CV attachment, and are opened with the user's desktop mail client for manual review.
 
 ## Request Flow
 
@@ -59,7 +59,7 @@ Flask validates recipients, subject, body, and attachment
 The uploaded CV is saved temporarily on the local machine
         |
         v
-The local bridge launches Outlook desktop compose windows
+The local bridge creates and opens local unsent EML draft files
         |
         v
 One editable draft email is created per recipient
@@ -76,7 +76,7 @@ The local bridge approach gives the application more control while still keeping
 ## Key Technical Decisions
 
 - **Flask backend:** provides a lightweight local API between the browser and the desktop environment.
-- **Outlook desktop command-line launch:** opens compose windows from the local bridge without sending mail automatically.
+- **EML draft generation:** creates local unsent email draft files that can include attachments without sending mail automatically.
 - **Separate drafts:** each recipient receives an individual draft instead of being grouped into one email.
 - **Manual sending:** the app prepares drafts only; it does not send messages automatically.
 - **Local-only operation:** the bridge runs on `127.0.0.1`, keeping the desktop automation scoped to the user's machine.
@@ -88,7 +88,7 @@ index.html         Main web form
 style.css          UI styling
 app.js             Browser-side form logic and API calls
 app.ts             TypeScript source version of the browser logic
-server.py          Local Flask server and Outlook automation bridge
+server.py          Local Flask server and EML draft bridge
 requirements.txt   Python dependencies
 start_server.bat   Windows launcher for the local service
 tsconfig.json      TypeScript configuration

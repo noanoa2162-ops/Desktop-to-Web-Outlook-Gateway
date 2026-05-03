@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 import os
 import re
 import shutil
@@ -12,6 +13,8 @@ import tempfile
 import threading
 import uuid
 import webbrowser
+from email.message import EmailMessage
+from email.utils import formatdate
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import quote
@@ -22,6 +25,7 @@ from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = Path(tempfile.mkdtemp(prefix="outlook_drafts_"))
+DRAFT_FOLDER = BASE_DIR / "generated_drafts"
 ALLOWED_STATIC_FILES = {"index.html", "style.css", "app.js"}
 ALLOWED_ATTACHMENT_EXTENSIONS = {".pdf", ".doc", ".docx"}
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -29,6 +33,7 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 log.info("Temporary attachments folder: %s", UPLOAD_FOLDER)
+DRAFT_FOLDER.mkdir(exist_ok=True)
 
 app = Flask(__name__)
 CORS(app)
@@ -175,6 +180,74 @@ def run_outlook_command_line(
     )
 
 
+def open_eml_drafts(
+    subject: str,
+    body: str,
+    recipients: list[str],
+    attachment_path: Path | None,
+) -> tuple[dict, int]:
+    created = 0
+    errors: list[dict[str, str]] = []
+    opened_files: list[Path] = []
+
+    for recipient in recipients:
+        try:
+            message = EmailMessage()
+            message["X-Unsent"] = "1"
+            message["To"] = recipient
+            message["Subject"] = subject
+            message["Date"] = formatdate(localtime=True)
+            message.set_content(body)
+
+            if attachment_path and attachment_path.exists():
+                content_type, _ = mimetypes.guess_type(str(attachment_path))
+                if content_type:
+                    maintype, subtype = content_type.split("/", 1)
+                else:
+                    maintype, subtype = "application", "octet-stream"
+
+                message.add_attachment(
+                    attachment_path.read_bytes(),
+                    maintype=maintype,
+                    subtype=subtype,
+                    filename=attachment_path.name.split("_", 1)[-1],
+                )
+
+            safe_recipient = re.sub(r"[^A-Za-z0-9_.-]+", "_", recipient)
+            eml_path = DRAFT_FOLDER / f"{uuid.uuid4().hex}_{safe_recipient}.eml"
+            eml_path.write_bytes(message.as_bytes())
+
+            outlook_exe = find_outlook_exe()
+            if outlook_exe:
+                subprocess.Popen([outlook_exe, "/eml", str(eml_path)], cwd=BASE_DIR)
+            else:
+                os.startfile(str(eml_path))
+
+            created += 1
+            opened_files.append(eml_path)
+            log.info("Opened EML draft for %s: %s", recipient, eml_path)
+        except Exception as exc:
+            log.exception("Failed to open EML draft for %s", recipient)
+            errors.append({"recipient": recipient, "error": str(exc)})
+
+    if opened_files:
+        try:
+            subprocess.Popen(["explorer.exe", "/select,", str(opened_files[0])])
+        except Exception:
+            log.exception("Could not open generated drafts folder")
+
+    return (
+        {
+            "success": created > 0,
+            "created": created,
+            "errors": errors,
+            "draftFolder": str(DRAFT_FOLDER),
+            "error": "" if created > 0 else "No draft file was opened.",
+        },
+        200 if created > 0 else 500,
+    )
+
+
 @app.get("/")
 def index():
     return send_from_directory(BASE_DIR, "index.html")
@@ -225,7 +298,7 @@ def create_drafts():
     if attachment_error:
         return jsonify({"success": False, "error": attachment_error}), 400
 
-    result, status_code = run_outlook_command_line(subject, body, recipients, attachment_path)
+    result, status_code = open_eml_drafts(subject, body, recipients, attachment_path)
     return jsonify(result), status_code
 
 

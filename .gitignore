@@ -6,3 +6,4 @@ bat_debug.*
 .venv/
 venv/
 node_modules/
+generated_drafts/
