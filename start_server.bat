@@ -30,6 +30,9 @@ if errorlevel 1 (
     )
 )
 
+echo Cleaning old local Python servers...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalAddress 127.0.0.1 -State Listen -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -ge 5000 -and $_.LocalPort -le 5019 } | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p -and $p.ProcessName -like 'python*') { Stop-Process -Id $p.Id -Force } }" >nul 2>nul
+
 if not defined OPEN_BROWSER set OPEN_BROWSER=1
 
 echo Starting local server...
