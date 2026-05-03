@@ -1,63 +1,112 @@
-# מערכת לפתיחת טיוטות Outlook מתוך אפליקציית Web
+# Desktop-to-Web Outlook Gateway
 
-הפרויקט מדגים פתרון למשימה: המשתמשת ממלאת טופס בדפדפן, לוחצת על פתיחת טיוטות, וב-Outlook המקומי נפתחת טיוטה נפרדת לכל נמען עם נושא, גוף הודעה וקובץ קורות חיים מצורף.
+Desktop-to-Web Outlook Gateway is a local web application for recruitment workflows. It allows a recruiter to enter candidate email content in a browser and generate ready-to-review Outlook draft emails on the user's desktop.
 
-## איך מריצים
+The system is designed for a common staffing-agency scenario: a recruiter needs to send a candidate profile and CV to several companies, but the final email should still be reviewed, edited, and sent manually from the recruiter's personal Outlook account.
 
-1. במחשב Windows עם Outlook הקלאסי מותקן ומוגדר.
-2. לחיצה כפולה על `start_server.bat`.
-3. הדפדפן ייפתח אוטומטית. בדרך כלל הכתובת תהיה `http://127.0.0.1:5000/`; אם הפורט תפוס, השרת יבחר פורט פנוי וידפיס את הכתובת בחלון.
-4. ממלאים נושא, נמענים, גוף הודעה וקובץ קורות חיים.
-5. לוחצים על `פתח טיוטות ב-Outlook`.
+## What The Application Does
 
-אפשר גם להריץ ידנית:
+The application provides a browser-based form for preparing candidate submission emails:
 
-```bash
-python -m pip install -r requirements.txt
-python server.py
-```
+- Email subject
+- One or more recipient addresses
+- Message body
+- Candidate CV attachment, as a PDF or Word document
 
-## מבנה הפתרון
+When the form is submitted, the application creates a separate Outlook draft for each recipient. Each draft includes the entered subject, message body, recipient address, and attached CV file. The system does not send emails automatically; it opens editable drafts so the recruiter stays in control of the final review and send action.
+
+## User Experience
+
+The interface is intentionally focused and operational. It presents a single workflow: prepare an email, attach the CV, and open Outlook drafts.
+
+The form supports multiple recipients while keeping each outgoing message separate. This avoids creating one shared group email and gives the recruiter a clean draft per company or hiring contact.
+
+## Architecture
+
+The project combines a browser UI with a small local backend service:
 
 ```text
-index.html        טופס Web בעברית
-style.css         עיצוב המסך
-app.js            לוגיקת הדפדפן ושליחת הטופס לשרת המקומי
-server.py         Flask מקומי שיוצר טיוטות דרך Outlook COM
-requirements.txt  חבילות Python
-start_server.bat  הפעלה נוחה ב-Windows
+Browser UI
+  index.html
+  style.css
+  app.js
+
+Local Python Bridge
+  server.py
+  Flask
+  pywin32 / Outlook COM Automation
+
+Desktop Application
+  Microsoft Outlook
 ```
 
-## איך זה עובד
+The browser cannot directly control local desktop software such as Outlook. For security reasons, websites are not allowed to freely access local files, launch desktop programs, or use Windows COM APIs.
 
-הדפדפן לא פונה ישירות ל-Outlook. במקום זה הוא שולח את נתוני הטופס אל שרת Flask שרץ מקומית על המחשב ב-`127.0.0.1`. השרת משתמש ב-`pywin32` וב-`Outlook.Application` כדי ליצור `MailItem` חדש לכל נמען, למלא את השדות, לצרף את הקובץ ולפתוח את הטיוטה באמצעות `Display`.
+To solve that limitation, the project uses a local Flask server as a controlled bridge. The browser sends the form data to `localhost`, and the Python service uses Outlook COM Automation to create draft email windows in the installed desktop Outlook application.
 
-## למה לא `mailto:`
+## Request Flow
 
-`mailto:` מתאים לפתיחה בסיסית של חלון מייל, אבל הוא לא מספיק לדרישה הזו:
+```text
+Recruiter fills the web form
+        |
+        v
+Frontend sends FormData to the local Flask server
+        |
+        v
+Flask validates recipients, subject, body, and attachment
+        |
+        v
+The uploaded CV is saved temporarily on the local machine
+        |
+        v
+pywin32 opens Outlook through COM Automation
+        |
+        v
+One editable draft email is created per recipient
+```
 
-- אין תמיכה אמינה בצירוף קבצים מהמחשב.
-- קשה לשלוט בפתיחת כמה טיוטות נפרדות.
-- יש מגבלות אורך ותאימות בין דפדפנים ותוכנות מייל.
-- אין שליטה טובה ב-Outlook המקומי או באוטומציה של הטיוטות.
+## Why Not Use `mailto:`
 
-## למה Web לא יכול לפתוח ישירות את Outlook
+The project intentionally avoids relying on `mailto:` links because they are not sufficient for this workflow.
 
-דפדפן רגיל רץ בסביבת אבטחה מוגבלת. JavaScript באתר לא אמור לגשת חופשי לתוכנות מקומיות כמו Outlook, ל-COM Automation או לקבצים במחשב. זו הגנה חשובה: אחרת כל אתר היה יכול לקרוא קבצים, להפעיל תוכנות או לשלוח פעולות בשם המשתמש.
+`mailto:` can open a basic email compose window, but it does not reliably support file attachments, has compatibility differences between clients and browsers, and is not suitable for automatically creating multiple separate drafts with a CV attached.
 
-לכן הפתרון כולל גשר מקומי: שרת Python קטן שרץ על מחשב המשתמשת. הדפדפן מדבר רק עם `localhost`, והשרת המקומי הוא זה שמורשה לעבוד מול Outlook.
+The local bridge approach gives the application more control while still keeping the final send action manual and user-approved.
 
-## מגבלות חשובות
+## Key Technical Decisions
 
-- הפתרון עובד על Windows בלבד.
-- נדרש Outlook הקלאסי של Microsoft Office. גרסת New Outlook לא מספקת את אותו COM Automation.
-- המשתמשת צריכה להריץ את `start_server.bat` לפני השימוש.
-- המערכת פותחת טיוטות בלבד ולא שולחת מיילים אוטומטית, בהתאם לדרישה.
+- **Flask backend:** provides a lightweight local API between the browser and the desktop environment.
+- **pywin32:** enables Outlook COM Automation on Windows.
+- **Separate drafts:** each recipient receives an individual draft instead of being grouped into one email.
+- **Manual sending:** the app prepares drafts only; it does not send messages automatically.
+- **Local-only operation:** the bridge runs on `127.0.0.1`, keeping the desktop automation scoped to the user's machine.
 
-## נקודות לסרטון ההגשה
+## Project Structure
 
-- להסביר שהמטרה היא לא לשלוח אוטומטית אלא לפתוח טיוטות לבדיקה ושליחה ידנית.
-- להראות מילוי טופס עם שני נמענים וקובץ קורות חיים.
-- להראות שב-Outlook נפתחות שתי טיוטות נפרדות.
-- להסביר למה `mailto:` לא מספיק ולמה צריך רכיב מקומי.
-- לציין שהבחירה ב-Flask ו-`pywin32` נועדה לגשר בין Web לבין Outlook המקומי בצורה פשוטה וממוקדת.
+```text
+index.html         Main web form
+style.css          UI styling
+app.js             Browser-side form logic and API calls
+app.ts             TypeScript source version of the browser logic
+server.py          Local Flask server and Outlook automation bridge
+requirements.txt   Python dependencies
+start_server.bat   Windows launcher for the local service
+tsconfig.json      TypeScript configuration
+```
+
+## Platform Scope
+
+This solution targets Windows machines with classic Microsoft Outlook installed and configured. The Outlook automation layer depends on COM APIs, which are available in the classic desktop version of Outlook.
+
+The newer "New Outlook" client does not expose the same COM automation interface, so the desktop bridge approach is intended for environments where classic Outlook is available.
+
+## Security And Control
+
+The application is built around a deliberate safety boundary:
+
+- The browser UI collects the email content.
+- The local bridge handles desktop automation.
+- Outlook opens drafts for the user to inspect.
+- The user manually decides whether to edit, send, or discard each message.
+
+This design avoids silent email sending and keeps the recruiter in control of communication from their personal mailbox.
