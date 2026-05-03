@@ -128,8 +128,19 @@ def run_outlook_command_line(
             mailto_part = (
                 f"{recipient}?subject={quote(subject)}&body={quote(body)}"
             )
-            command = f'start "" "{outlook_exe}" /c ipm.note /m "{mailto_part}"'
-            subprocess.Popen(["cmd.exe", "/c", command], cwd=BASE_DIR)
+            subprocess.Popen(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "Start-Process -FilePath $args[0] -ArgumentList @('/c','ipm.note','/m',$args[1])",
+                    outlook_exe,
+                    mailto_part,
+                ],
+                cwd=BASE_DIR,
+            )
             created += 1
             log.info("Started Outlook draft command for %s", recipient)
         except Exception as exc:
