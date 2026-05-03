@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>פתיחת טיוטות Outlook</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="tool-panel" aria-labelledby="pageTitle">
+      <header class="panel-header">
+        <div>
+          <p class="eyebrow">מערכת גיוס מועמדים</p>
+          <h1 id="pageTitle">פתיחת טיוטות Outlook</h1>
+        </div>
+        <div class="server-status" id="serverStatus">בודק שרת</div>
+      </header>
+
+      <form id="mailForm" novalidate>
+        <div class="field-group">
+          <label for="subject">נושא המייל *</label>
+          <input
+            type="text"
+            id="subject"
+            placeholder="לדוגמה: מועמדות לתפקיד מפתח Full Stack"
+            autocomplete="off"
+            required
+          />
+        </div>
+
+        <div class="field-group">
+          <label>כתובות נמענים *</label>
+          <div class="recipients-wrapper" id="recipientsWrapper">
+            <div class="recipient-row">
+              <input
+                type="email"
+                placeholder="email@example.com"
+                class="recipient-input"
+                autocomplete="email"
+                required
+              />
+              <button type="button" class="btn-icon remove-recipient" title="הסר נמען" aria-label="הסר נמען">&times;</button>
+            </div>
+          </div>
+          <button type="button" class="btn-secondary" id="addRecipient">+ הוסף נמען</button>
+        </div>
+
+        <div class="field-group">
+          <label for="body">גוף ההודעה *</label>
+          <textarea
+            id="body"
+            placeholder="כתבי כאן את תוכן ההודעה שתיפתח בכל טיוטה..."
+            required
+          ></textarea>
+        </div>
+
+        <div class="field-group">
+          <label for="cvFile">קובץ קורות חיים</label>
+          <div class="file-upload-area" id="dropZone">
+            <input type="file" id="cvFile" accept=".pdf,.doc,.docx" />
+            <span class="file-upload-title">גררי קובץ לכאן או לחצי לבחירה</span>
+            <span class="file-upload-subtitle">PDF, DOC או DOCX</span>
+          </div>
+          <div class="file-name" id="fileName" aria-live="polite"></div>
+        </div>
+
+        <button type="submit" class="btn-submit" id="submitBtn">פתח טיוטות ב-Outlook</button>
+        <div class="status-msg" id="statusMsg" aria-live="polite"></div>
+      </form>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
