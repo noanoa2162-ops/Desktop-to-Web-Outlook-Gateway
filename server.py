@@ -128,12 +128,8 @@ def run_outlook_command_line(
             mailto_part = (
                 f"{recipient}?subject={quote(subject)}&body={quote(body)}"
             )
-            args = ["/c", "ipm.note", "/m", mailto_part]
-
-            if attachment_path and attachment_path.exists():
-                args.extend(["/a", str(attachment_path)])
-
-            subprocess.Popen([outlook_exe, *args], cwd=BASE_DIR)
+            command = f'start "" "{outlook_exe}" /c ipm.note /m "{mailto_part}"'
+            subprocess.Popen(["cmd.exe", "/c", command], cwd=BASE_DIR)
             created += 1
             log.info("Started Outlook draft command for %s", recipient)
         except Exception as exc:
