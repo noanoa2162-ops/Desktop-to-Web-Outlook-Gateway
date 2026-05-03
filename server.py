@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
+import shutil
 import socket
 import subprocess
-import sys
 import tempfile
 import threading
 import uuid
 import webbrowser
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import quote
 
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -22,7 +22,6 @@ from werkzeug.utils import secure_filename
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = Path(tempfile.mkdtemp(prefix="outlook_drafts_"))
-BRIDGE_TIMEOUT_SECONDS = 45
 ALLOWED_STATIC_FILES = {"index.html", "style.css", "app.js"}
 ALLOWED_ATTACHMENT_EXTENSIONS = {".pdf", ".doc", ".docx"}
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -88,85 +87,68 @@ def save_attachment() -> tuple[Path | None, str | None]:
 
 def outlook_unavailable_message() -> str | None:
     if os.name != "nt":
-        return "This solution requires Windows because Outlook is controlled through COM Automation."
+        return "This solution requires Windows because it opens the local Outlook desktop app."
+    if find_outlook_exe() is None:
+        return "Classic Outlook was not found on this machine."
     return None
 
 
-def run_outlook_bridge(
+def find_outlook_exe() -> str | None:
+    candidates = [
+        shutil.which("OUTLOOK.EXE"),
+        shutil.which("outlook.exe"),
+        r"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE",
+        r"C:\Program Files (x86)\Microsoft Office\root\Office16\OUTLOOK.EXE",
+        r"C:\Program Files\Microsoft Office\Office16\OUTLOOK.EXE",
+        r"C:\Program Files (x86)\Microsoft Office\Office16\OUTLOOK.EXE",
+    ]
+
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+
+    return None
+
+
+def run_outlook_command_line(
     subject: str,
     body: str,
     recipients: list[str],
     attachment_path: Path | None,
 ) -> tuple[dict, int]:
-    payload = {
-        "subject": subject,
-        "body": body,
-        "recipients": recipients,
-        "attachment_path": str(attachment_path) if attachment_path else None,
-    }
-    payload_path = UPLOAD_FOLDER / f"{uuid.uuid4().hex}_payload.json"
-    payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    outlook_exe = find_outlook_exe()
+    if outlook_exe is None:
+        return {"success": False, "created": 0, "errors": [], "error": "Classic Outlook was not found."}, 500
 
-    try:
-        completed = subprocess.run(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-STA",
-                "-File",
-                str(BASE_DIR / "outlook_bridge.ps1"),
-                "-PayloadPath",
-                str(payload_path),
-            ],
-            cwd=BASE_DIR,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=BRIDGE_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        return (
-            {
-                "success": False,
-                "created": 0,
-                "errors": [],
-                "error": (
-                    "Outlook did not respond in time. Open classic Outlook first "
-                    "and close any profile, login, or security dialog."
-                ),
-            },
-            504,
-        )
-    finally:
+    created = 0
+    errors: list[dict[str, str]] = []
+
+    for recipient in recipients:
         try:
-            payload_path.unlink()
-        except OSError:
-            pass
+            mailto_part = (
+                f"{recipient}?subject={quote(subject)}&body={quote(body)}"
+            )
+            args = ["/c", "ipm.note", "/m", mailto_part]
 
-    stdout = completed.stdout.strip()
-    stderr = completed.stderr.strip()
-    log.info("Outlook bridge exit code: %s", completed.returncode)
-    if stderr:
-        log.error("Outlook bridge stderr: %s", stderr)
+            if attachment_path and attachment_path.exists():
+                args.extend(["/a", str(attachment_path)])
 
-    try:
-        result = json.loads(stdout) if stdout else {}
-    except json.JSONDecodeError:
-        result = {
-            "success": False,
-            "created": 0,
-            "errors": [],
-            "error": "Outlook bridge returned an invalid response.",
-            "stdout": stdout,
-            "stderr": stderr,
-        }
+            subprocess.Popen([outlook_exe, *args], cwd=BASE_DIR)
+            created += 1
+            log.info("Started Outlook draft command for %s", recipient)
+        except Exception as exc:
+            log.exception("Failed to launch Outlook draft for %s", recipient)
+            errors.append({"recipient": recipient, "error": str(exc)})
 
-    if completed.returncode != 0 and not result.get("error"):
-        result["error"] = stderr or "Outlook bridge failed."
-
-    return result, 200 if result.get("success") else 500
+    return (
+        {
+            "success": created > 0,
+            "created": created,
+            "errors": errors,
+            "error": "" if created > 0 else "No Outlook draft was launched.",
+        },
+        200 if created > 0 else 500,
+    )
 
 
 @app.get("/")
@@ -219,7 +201,7 @@ def create_drafts():
     if attachment_error:
         return jsonify({"success": False, "error": attachment_error}), 400
 
-    result, status_code = run_outlook_bridge(subject, body, recipients, attachment_path)
+    result, status_code = run_outlook_command_line(subject, body, recipients, attachment_path)
     return jsonify(result), status_code
 
 

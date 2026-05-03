@@ -34,16 +34,15 @@ Browser UI
 Local Python Bridge
   server.py
   Flask
-  outlook_bridge.ps1
-  PowerShell / Outlook COM Automation
+  Outlook command-line launch
 
 Desktop Application
   Microsoft Outlook
 ```
 
-The browser cannot directly control local desktop software such as Outlook. For security reasons, websites are not allowed to freely access local files, launch desktop programs, or use Windows COM APIs.
+The browser cannot directly control local desktop software such as Outlook. For security reasons, websites are not allowed to freely access local files or launch desktop programs.
 
-To solve that limitation, the project uses a local Flask server as a controlled bridge. The browser sends the form data to `localhost`, and the Python service delegates Outlook automation to a short-lived PowerShell bridge process. That process uses Outlook COM Automation to create draft email windows in the installed desktop Outlook application.
+To solve that limitation, the project uses a local Flask server as a controlled bridge. The browser sends the form data to `localhost`, and the Python service launches the installed classic Outlook desktop application with command-line arguments that open editable compose windows.
 
 ## Request Flow
 
@@ -60,7 +59,7 @@ Flask validates recipients, subject, body, and attachment
 The uploaded CV is saved temporarily on the local machine
         |
         v
-The Outlook bridge process runs PowerShell COM Automation
+The local bridge launches Outlook desktop compose windows
         |
         v
 One editable draft email is created per recipient
@@ -77,7 +76,7 @@ The local bridge approach gives the application more control while still keeping
 ## Key Technical Decisions
 
 - **Flask backend:** provides a lightweight local API between the browser and the desktop environment.
-- **PowerShell COM bridge:** enables Outlook desktop automation on Windows.
+- **Outlook desktop command-line launch:** opens compose windows from the local bridge without sending mail automatically.
 - **Separate drafts:** each recipient receives an individual draft instead of being grouped into one email.
 - **Manual sending:** the app prepares drafts only; it does not send messages automatically.
 - **Local-only operation:** the bridge runs on `127.0.0.1`, keeping the desktop automation scoped to the user's machine.
@@ -90,7 +89,6 @@ style.css          UI styling
 app.js             Browser-side form logic and API calls
 app.ts             TypeScript source version of the browser logic
 server.py          Local Flask server and Outlook automation bridge
-outlook_bridge.ps1 Short-lived Outlook COM automation process
 requirements.txt   Python dependencies
 start_server.bat   Windows launcher for the local service
 tsconfig.json      TypeScript configuration
