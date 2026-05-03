@@ -34,6 +34,7 @@ Browser UI
 Local Python Bridge
   server.py
   Flask
+  outlook_bridge.py
   pywin32 / Outlook COM Automation
 
 Desktop Application
@@ -42,7 +43,7 @@ Desktop Application
 
 The browser cannot directly control local desktop software such as Outlook. For security reasons, websites are not allowed to freely access local files, launch desktop programs, or use Windows COM APIs.
 
-To solve that limitation, the project uses a local Flask server as a controlled bridge. The browser sends the form data to `localhost`, and the Python service uses Outlook COM Automation to create draft email windows in the installed desktop Outlook application.
+To solve that limitation, the project uses a local Flask server as a controlled bridge. The browser sends the form data to `localhost`, and the Python service delegates Outlook automation to a short-lived bridge process. That process uses Outlook COM Automation to create draft email windows in the installed desktop Outlook application.
 
 ## Request Flow
 
@@ -59,7 +60,7 @@ Flask validates recipients, subject, body, and attachment
 The uploaded CV is saved temporarily on the local machine
         |
         v
-pywin32 opens Outlook through COM Automation
+The Outlook bridge process runs pywin32 COM Automation
         |
         v
 One editable draft email is created per recipient
@@ -89,6 +90,7 @@ style.css          UI styling
 app.js             Browser-side form logic and API calls
 app.ts             TypeScript source version of the browser logic
 server.py          Local Flask server and Outlook automation bridge
+outlook_bridge.py  Short-lived Outlook COM automation process
 requirements.txt   Python dependencies
 start_server.bat   Windows launcher for the local service
 tsconfig.json      TypeScript configuration

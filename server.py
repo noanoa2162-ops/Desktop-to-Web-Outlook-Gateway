@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import socket
+import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -18,15 +21,16 @@ from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
 try:
-    import pythoncom
-    import win32com.client as win32_client
+    import pythoncom  # noqa: F401
+    import win32com.client  # noqa: F401
 except ImportError:
     pythoncom = None
-    win32_client = None
+    win32com = None
 
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_FOLDER = Path(tempfile.mkdtemp(prefix="outlook_drafts_"))
+BRIDGE_TIMEOUT_SECONDS = 45
 ALLOWED_STATIC_FILES = {"index.html", "style.css", "app.js"}
 ALLOWED_ATTACHMENT_EXTENSIONS = {".pdf", ".doc", ".docx"}
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -53,11 +57,11 @@ def choose_port(preferred_port: int) -> int:
         if not port_is_busy("127.0.0.1", port):
             return port
 
-    raise RuntimeError("לא נמצא פורט פנוי להפעלת השרת המקומי.")
+    raise RuntimeError("No free local port was found for the Flask server.")
 
 
 def normalize_recipients(values: Iterable[str]) -> list[str]:
-    """Accept repeated form fields and comma/semicolon/newline separated values."""
+    """Accept repeated fields and comma/semicolon/newline separated values."""
     recipients: list[str] = []
     seen: set[str] = set()
 
@@ -80,11 +84,10 @@ def save_attachment() -> tuple[Path | None, str | None]:
     original_path = Path(uploaded_file.filename)
     extension = original_path.suffix.lower()
     if extension not in ALLOWED_ATTACHMENT_EXTENSIONS:
-        return None, "ניתן לצרף קובץ PDF, DOC או DOCX בלבד"
+        return None, "Only PDF, DOC, and DOCX attachments are supported."
 
     safe_stem = secure_filename(original_path.stem) or "cv_attachment"
-    original_name = f"{safe_stem}{extension}"
-    unique_name = f"{uuid.uuid4().hex}_{original_name}"
+    unique_name = f"{uuid.uuid4().hex}_{safe_stem}{extension}"
     attachment_path = UPLOAD_FOLDER / unique_name
     uploaded_file.save(attachment_path)
     log.info("Saved attachment: %s", attachment_path)
@@ -93,10 +96,77 @@ def save_attachment() -> tuple[Path | None, str | None]:
 
 def outlook_unavailable_message() -> str | None:
     if os.name != "nt":
-        return "הפתרון דורש Windows, כי Outlook נפתח דרך COM Automation."
-    if pythoncom is None or win32_client is None:
-        return "חסרה החבילה pywin32. הריצי: python -m pip install -r requirements.txt"
+        return "This solution requires Windows because Outlook is controlled through COM Automation."
+    if pythoncom is None:
+        return "The pywin32 package is missing. Run: python -m pip install -r requirements.txt"
     return None
+
+
+def run_outlook_bridge(
+    subject: str,
+    body: str,
+    recipients: list[str],
+    attachment_path: Path | None,
+) -> tuple[dict, int]:
+    payload = {
+        "subject": subject,
+        "body": body,
+        "recipients": recipients,
+        "attachment_path": str(attachment_path) if attachment_path else None,
+    }
+    payload_path = UPLOAD_FOLDER / f"{uuid.uuid4().hex}_payload.json"
+    payload_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(BASE_DIR / "outlook_bridge.py"), str(payload_path)],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=BRIDGE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return (
+            {
+                "success": False,
+                "created": 0,
+                "errors": [],
+                "error": (
+                    "Outlook did not respond in time. Open classic Outlook first "
+                    "and close any profile, login, or security dialog."
+                ),
+            },
+            504,
+        )
+    finally:
+        try:
+            payload_path.unlink()
+        except OSError:
+            pass
+
+    stdout = completed.stdout.strip()
+    stderr = completed.stderr.strip()
+    log.info("Outlook bridge exit code: %s", completed.returncode)
+    if stderr:
+        log.error("Outlook bridge stderr: %s", stderr)
+
+    try:
+        result = json.loads(stdout) if stdout else {}
+    except json.JSONDecodeError:
+        result = {
+            "success": False,
+            "created": 0,
+            "errors": [],
+            "error": "Outlook bridge returned an invalid response.",
+            "stdout": stdout,
+            "stderr": stderr,
+        }
+
+    if completed.returncode != 0 and not result.get("error"):
+        result["error"] = stderr or "Outlook bridge failed."
+
+    return result, 200 if result.get("success") else 500
 
 
 @app.get("/")
@@ -107,7 +177,7 @@ def index():
 @app.get("/<path:filename>")
 def static_files(filename: str):
     if filename not in ALLOWED_STATIC_FILES:
-        return jsonify({"success": False, "error": "הקובץ לא נמצא"}), 404
+        return jsonify({"success": False, "error": "File not found."}), 404
     return send_from_directory(BASE_DIR, filename)
 
 
@@ -119,7 +189,7 @@ def health():
             "app": "outlook-drafts-local",
             "success": unavailable is None,
             "status": "ready" if unavailable is None else "limited",
-            "message": unavailable or "השרת המקומי פעיל.",
+            "message": unavailable or "Local server is ready.",
         }
     )
 
@@ -131,15 +201,15 @@ def create_drafts():
     recipients = normalize_recipients(request.form.getlist("recipients"))
 
     if not subject:
-        return jsonify({"success": False, "error": "חסר נושא מייל"}), 400
+        return jsonify({"success": False, "error": "Email subject is required."}), 400
     if not recipients:
-        return jsonify({"success": False, "error": "חסרה לפחות כתובת נמען אחת"}), 400
+        return jsonify({"success": False, "error": "At least one recipient is required."}), 400
     if not body:
-        return jsonify({"success": False, "error": "חסר גוף הודעה"}), 400
+        return jsonify({"success": False, "error": "Email body is required."}), 400
 
     invalid = [email for email in recipients if not EMAIL_RE.match(email)]
     if invalid:
-        return jsonify({"success": False, "error": f"כתובת מייל לא תקינה: {invalid[0]}"}), 400
+        return jsonify({"success": False, "error": f"Invalid email address: {invalid[0]}"}), 400
 
     unavailable = outlook_unavailable_message()
     if unavailable:
@@ -149,42 +219,8 @@ def create_drafts():
     if attachment_error:
         return jsonify({"success": False, "error": attachment_error}), 400
 
-    created = 0
-    errors: list[dict[str, str]] = []
-
-    try:
-        pythoncom.CoInitialize()
-        outlook = win32_client.Dispatch("Outlook.Application")
-
-        for recipient in recipients:
-            try:
-                mail = outlook.CreateItem(0)  # 0 = olMailItem
-                mail.To = recipient
-                mail.Subject = subject
-                mail.Body = body
-
-                if attachment_path and attachment_path.exists():
-                    mail.Attachments.Add(str(attachment_path))
-
-                mail.Display(False)
-                created += 1
-                log.info("Draft opened for %s", recipient)
-            except Exception as exc:  # Outlook COM errors should not hide other recipients.
-                log.exception("Failed to create draft for %s", recipient)
-                errors.append({"recipient": recipient, "error": str(exc)})
-    except Exception as exc:
-        log.exception("Could not start Outlook")
-        return jsonify({"success": False, "error": f"לא ניתן לפתוח את Outlook: {exc}"}), 500
-    finally:
-        try:
-            pythoncom.CoUninitialize()
-        except Exception:
-            pass
-
-    if created == 0:
-        return jsonify({"success": False, "error": "לא נפתחה אף טיוטה", "details": errors}), 500
-
-    return jsonify({"success": True, "created": created, "errors": errors})
+    result, status_code = run_outlook_bridge(subject, body, recipients, attachment_path)
+    return jsonify(result), status_code
 
 
 if __name__ == "__main__":
@@ -193,12 +229,12 @@ if __name__ == "__main__":
     url = f"http://127.0.0.1:{port}/"
 
     print("=" * 58)
-    print("שרת מקומי לפתיחת טיוטות Outlook פעיל")
-    print(f"פתחי בדפדפן: {url}")
-    print("לעצירה: Ctrl+C")
+    print("Outlook draft local server is running")
+    print(f"Open in browser: {url}")
+    print("Stop with Ctrl+C")
     print("=" * 58)
 
     if os.environ.get("OPEN_BROWSER", "1") != "0":
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
 
-    app.run(host="127.0.0.1", port=port, debug=False)
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
